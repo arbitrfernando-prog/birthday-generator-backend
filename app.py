@@ -1,3 +1,8 @@
+import sys
+import logging
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+print("=== Starting Flask app ===", flush=True)
+
 import os
 import json
 from flask import Flask, request, jsonify
