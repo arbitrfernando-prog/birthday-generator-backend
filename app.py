@@ -21,7 +21,7 @@ client = OpenAI(
 
 app = Flask(__name__)
 # Настройка CORS – замените на ваш домен Tilda, для локального теста оставьте localhost
-CORS(app, origins=["http://localhost:5001", "https://pozdrav888.tilda.ws"])
+CORS(app, origins=["http://localhost:5001", "https://pozdrav888.tilda.ws", "https://pozdravit-ai.ru"])
 
 def build_prompt(data):
     """Формирует детальный промпт для генерации трёх вариантов поздравления"""
