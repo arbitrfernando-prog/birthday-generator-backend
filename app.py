@@ -18,8 +18,9 @@ if not PIAPI_API_KEY:
     raise ValueError("Отсутствует переменная окружения PIAPI_API_KEY")
 
 # --- Конфигурация piapi (актуальный эндпоинт) ---
-PIAPI_BASE_URL = "https://api.piapi.ai/api/v1"  # базовый URL для всех запросов
-PIAPI_TASK_URL = f"{PIAPI_BASE_URL}/task"       # эндпоинт для создания задачи
+PIAPI_BASE_URL = "https://api.piapi.ai/api/v1"
+# 👇 ВОТ ЭТОТ URL — САМЫЙ ВАЖНЫЙ МОМЕНТ
+PIAPI_TASK_URL = f"{PIAPI_BASE_URL}/task"  # = https://api.piapi.ai/api/v1/task
 
 app = Flask(__name__)
 # Укажите ваши домены Tilda и локальный для тестов
@@ -185,7 +186,7 @@ def generate():
 def generate_song_lyrics(data):
     """Генерирует текст песни через DeepSeek (с учётом жанра)"""
     dear = "Дорогая" if data['gender'] == 'female' else "Дорогой"
-    genre = data.get('songGenre', 'pop')  # жанр из формы
+    genre = data.get('songGenre', 'pop')
 
     prompt = f"""Ты — поэт-песенник. Напиши текст песни на русском языке в жанре {genre} в честь дня рождения для человека по имени {data['name']}.
 
@@ -229,22 +230,20 @@ def generate_song_lyrics(data):
 
 def create_udio_task(lyrics, data):
     """
-    Отправляет задачу на генерацию музыки через piapi (актуальный эндпоинт).
-    Возвращает task_id или None.
+    Отправляет задачу на генерацию музыки через piapi.
+    👇 ЗДЕСЬ ИСПОЛЬЗУЕТСЯ НОВЫЙ ПРАВИЛЬНЫЙ URL
     """
     headers = {
         "x-api-key": PIAPI_API_KEY,
         "Content-Type": "application/json"
     }
 
-    # Параметры из данных
     name = data['name']
     genre = data.get('songGenre', 'pop')
     hobby = data.get('hobby', '')
 
-    # Формируем payload согласно документации piapi
     payload = {
-        "model": "udio-130",          # актуальная модель Udio
+        "model": "udio-130",
         "task_type": "music-generation",
         "input": {
             "prompt": f"A {genre} birthday song for {name}, {hobby}",
@@ -255,11 +254,12 @@ def create_udio_task(lyrics, data):
             "seed": -1
         },
         "config": {
-            "service_mode": "public"   # можно "private" для платного тарифа
+            "service_mode": "public"
         }
     }
 
     try:
+        # 👇 ВОТ ТУТ МЫ ИСПОЛЬЗУЕМ ПЕРЕМЕННУЮ С НОВЫМ URL
         response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         result = response.json()
@@ -273,7 +273,7 @@ def create_udio_task(lyrics, data):
         return None
 
 def get_udio_task_status(task_id):
-    """Проверяет статус задачи по task_id (эндпоинт GET /task/{task_id})"""
+    """Проверяет статус задачи по task_id (GET /task/{task_id})"""
     url = f"{PIAPI_BASE_URL}/task/{task_id}"
     headers = {"x-api-key": PIAPI_API_KEY}
 
@@ -286,7 +286,6 @@ def get_udio_task_status(task_id):
             status = task_data.get("status")
             if status == "completed":
                 audio_url = task_data.get("result", {}).get("audio_url")
-                # также можно получить title, если он есть
                 title = task_data.get("result", {}).get("title") or "Персональная песня"
                 return {"ready": True, "audio_url": audio_url, "title": title}
             elif status == "failed":
@@ -306,12 +305,10 @@ def generate_song():
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
 
-    # 1. Генерируем текст песни
     lyrics = generate_song_lyrics(data)
     if lyrics is None:
         return jsonify({"error": "Не удалось сгенерировать текст песни"}), 500
 
-    # 2. Отправляем задачу в piapi
     task_id = create_udio_task(lyrics, data)
     if not task_id:
         return jsonify({"error": "Не удалось создать задачу в piapi"}), 500
