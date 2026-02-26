@@ -237,7 +237,7 @@ def generate_song_lyrics(data):
 def create_udio_task(lyrics, data):
     """
     Отправляет задачу на генерацию музыки через piapi (API v1).
-    Возвращает task_id или None.
+    Возвращает task_id или None. Подробно логирует ответ.
     """
     headers = {
         "x-api-key": PIAPI_API_KEY,
@@ -265,14 +265,21 @@ def create_udio_task(lyrics, data):
 
     try:
         response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
+        # Выводим статус и тело ответа ВСЕГДА
+        print(f"piapi status: {response.status_code}")
+        print(f"piapi response body: {response.text}")
+
+        response.raise_for_status()  # выбросит исключение, если статус не 2xx
+
         result = response.json()
-        print(f"piapi response: {json.dumps(result, ensure_ascii=False)}")
         if result.get("code") == 200 and result.get("data", {}).get("task_id"):
             return result["data"]["task_id"]
         else:
             print("Ошибка от piapi (код не 200 или нет task_id):", result)
             return None
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP ошибка от piapi: {e}. Тело ответа: {response.text if 'response' in locals() else 'нет'}")
+        return None
     except Exception as e:
         print(f"Ошибка при создании задачи Udio: {e}")
         return None
