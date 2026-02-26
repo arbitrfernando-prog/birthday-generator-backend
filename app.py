@@ -260,7 +260,7 @@ def create_udio_task(lyrics, data):
     print(f"Sending payload to piapi: {json.dumps(payload, ensure_ascii=False)}")
 
     try:
-        response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=180)
+        response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=300)
         # Выводим статус и тело ответа ВСЕГДА
         print(f"piapi status: {response.status_code}")
         print(f"piapi response body: {response.text}")
