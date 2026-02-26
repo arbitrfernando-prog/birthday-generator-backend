@@ -18,9 +18,7 @@ if not PIAPI_API_KEY:
     raise ValueError("Отсутствует переменная окружения PIAPI_API_KEY")
 
 # --- Конфигурация piapi (актуальный эндпоинт) ---
-# 👇 ЭТО САМЫЙ ВАЖНЫЙ МОМЕНТ – ПРАВИЛЬНЫЙ URL
 PIAPI_TASK_URL = "https://api.piapi.ai/api/v1/task"
-# Базовый URL для проверки статуса
 PIAPI_BASE_URL = "https://api.piapi.ai/api/v1"
 
 app = Flask(__name__)
@@ -66,12 +64,65 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
-    """Формирует промпт для генерации трёх вариантов поздравления"""
-    # (без изменений – оставьте вашу существующую функцию)
-    # ... 
-    # Для краткости я не копирую всю функцию, но вы должны её сохранить.
-    # Просто оставьте ваш код build_prompt здесь.
-    pass
+    """Формирует детальный промпт для генерации трёх вариантов поздравления"""
+    # Определяем обращение в зависимости от пола
+    if data['gender'] == 'female':
+        dear = "Дорогая"
+    else:
+        dear = "Дорогой"
+
+    # Отношения с поздравляющим
+    relationship_map = {
+        'husband': 'муж', 'wife': 'жена', 'boyfriend': 'парень',
+        'girlfriend': 'девушка', 'friend': 'друг/подруга',
+        'colleague': 'коллега', 'relative': 'родственник'
+    }
+    relationship = relationship_map.get(data.get('relationship'), 'близкий человек')
+
+    # Семья (супруг, дети)
+    family_parts = []
+    if data.get('spouse'):
+        family_parts.append(f"супруг(а) {data['spouse']}")
+    if data.get('children'):
+        family_parts.append(f"дети {data['children']}")
+    family_text = f"Семья: {', '.join(family_parts)}. " if family_parts else ""
+
+    # Мечты
+    dreams_text = f"Особая мечта: {data['dreams']}. " if data.get('dreams') else ""
+
+    # Стиль поздравления
+    style_text = {
+        'warm': 'тёплое, душевное, искреннее',
+        'funny': 'с юмором, но доброе',
+        'romantic': 'романтичное, нежное',
+        'short': 'короткое, для смс'
+    }.get(data.get('style'), 'тёплое')
+
+    prompt = f"""
+Ты — мастер искренних поздравлений. Напиши **три разных варианта** поздравления с днём рождения для человека по имени {data['name']}.
+
+Детали:
+- Пол: {data['gender']}
+- Возраст: {data['age']} лет
+- Отношения с поздравляющим: {relationship}
+- Подпись от: {data['fromName']}
+- Увлечения: {data['hobby']}
+- Черты характера: {data['traits']}
+- {dreams_text}
+- {family_text}
+- Желаемый стиль: {style_text}
+
+Требования к каждому варианту:
+- Живой, естественный язык, как будто писал настоящий человек.
+- Разные интонации (например, один более эмоциональный, другой – сдержанный, третий – с лёгким юмором, если уместно).
+- Длина: 2–4 предложения.
+- Заканчивается подписью "{data['fromName']}".
+
+**Верни ТОЛЬКО JSON-массив из трёх строк** в формате:
+["вариант 1", "вариант 2", "вариант 3"]
+Никаких дополнительных пояснений, только массив.
+"""
+    return prompt
 
 @app.route('/')
 def index():
@@ -101,11 +152,16 @@ def generate():
             return jsonify({"error": "Не указано имя именинника"}), 400
 
         prompt = build_prompt(data)
+        print(f"Sending prompt to DeepSeek: {prompt[:200]}...")  # отладка
+
         result_text = deepseek_completion(prompt)
 
         if result_text is None:
             return jsonify({"error": "Ошибка при обращении к нейросети"}), 500
 
+        print(f"DeepSeek response: {result_text[:200]}...")  # отладка
+
+        # Пытаемся распарсить JSON
         try:
             variants = json.loads(result_text)
             if isinstance(variants, list) and len(variants) == 3 and all(isinstance(v, str) for v in variants):
@@ -130,6 +186,7 @@ def generate():
             })
 
     except Exception as e:
+        print(f"Ошибка в /generate: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН ==========
@@ -191,10 +248,8 @@ def create_udio_task(lyrics, data):
     genre = data.get('songGenre', 'pop')
     hobby = data.get('hobby', '')
 
-    # Краткий промпт для описания стиля
     prompt = f"A {genre} birthday song for {name}, {hobby}"
 
-    # Точное соответствие спецификации
     payload = {
         "model": "music-u",
         "task_type": "generate_music_custom",
@@ -206,7 +261,6 @@ def create_udio_task(lyrics, data):
         }
     }
 
-    # 👇 Отладочный вывод (будет виден в логах Timeweb)
     print(f"Sending payload to piapi: {json.dumps(payload, ensure_ascii=False)}")
 
     try:
