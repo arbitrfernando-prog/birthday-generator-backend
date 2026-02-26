@@ -5,22 +5,26 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+# Загружаем переменные окружения из .env
 load_dotenv()
 
-# --- Проверка ключей ---
+# --- Проверка наличия обязательных ключей ---
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 PIAPI_API_KEY = os.getenv("PIAPI_API_KEY")
 
 if not DEEPSEEK_API_KEY:
-    raise ValueError("Отсутствует DEEPSEEK_API_KEY")
+    raise ValueError("Отсутствует переменная окружения DEEPSEEK_API_KEY")
 if not PIAPI_API_KEY:
-    raise ValueError("Отсутствует PIAPI_API_KEY")
+    raise ValueError("Отсутствует переменная окружения PIAPI_API_KEY")
 
-# --- Конфигурация piapi ---
+# --- Конфигурация piapi (актуальный эндпоинт) ---
+# 👇 ЭТО САМЫЙ ВАЖНЫЙ МОМЕНТ – ПРАВИЛЬНЫЙ URL
+PIAPI_TASK_URL = "https://api.piapi.ai/api/v1/task"
+# Базовый URL для проверки статуса
 PIAPI_BASE_URL = "https://api.piapi.ai/api/v1"
-PIAPI_TASK_URL = f"{PIAPI_BASE_URL}/task"
 
 app = Flask(__name__)
+# Настройка CORS – добавьте все ваши домены
 CORS(app, origins=[
     "http://localhost:5001",
     "https://pozdrav888.tilda.ws",
@@ -30,8 +34,12 @@ CORS(app, origins=[
     "https://arbitrfernando-prog-birthday-generator-backend-9bd2.twc1.net"
 ])
 
-# ========== ФУНКЦИИ ДЛЯ DEEPSEEK ==========
+# ========== ФУНКЦИЯ ДЛЯ ПРЯМОГО ВЫЗОВА DEEPSEEK ==========
 def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
+    """
+    Отправляет запрос к DeepSeek API и возвращает текст ответа.
+    В случае ошибки возвращает None.
+    """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
@@ -43,18 +51,26 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
         "max_tokens": max_tokens
     }
     try:
-        response = requests.post("https://api.deepseek.com/v1/chat/completions",
-                                  json=payload, headers=headers, timeout=30)
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"Ошибка DeepSeek: {e}")
+        print(f"Ошибка вызова DeepSeek API: {e}")
         return None
 
-# ========== ТЕКСТОВЫЕ ПОЗДРАВЛЕНИЯ ==========
+# ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
-    # (без изменений, как в предыдущей версии)
-    # ... (сохраняем существующую функцию)
+    """Формирует промпт для генерации трёх вариантов поздравления"""
+    # (без изменений – оставьте вашу существующую функцию)
+    # ... 
+    # Для краткости я не копирую всю функцию, но вы должны её сохранить.
+    # Просто оставьте ваш код build_prompt здесь.
     pass
 
 @app.route('/')
@@ -63,18 +79,64 @@ def index():
 
 @app.route('/test', methods=['POST'])
 def test():
-    # (без изменений)
-    pass
+    """Тестовый эндпоинт (без нейросети)"""
+    data = request.get_json()
+    name = data.get('name', 'друг')
+    gender = data.get('gender', 'female')
+    from_name = data.get('fromName', 'Твой близкий')
+    greeting = f"Дорогая {name}" if gender == 'female' else f"Дорогой {name}"
+    variants = [
+        f"{greeting}! От всей души поздравляю с днём рождения! Желаю счастья, здоровья и исполнения самых заветных желаний. Пусть каждый день дарит радость!",
+        f"С днём рождения, {name}! Ты удивительный человек. Пусть мечты сбываются, а рядом будут только любящие люди. С любовью, {from_name}.",
+        f"{greeting}! Желаю тебе море улыбок, солнечного настроения и ярких впечатлений. Пусть жизнь играет яркими красками!"
+    ]
+    return jsonify({"variants": variants})
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    # (без изменений)
-    pass
+    """Основной эндпоинт для текстовых поздравлений через DeepSeek"""
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({"error": "Не указано имя именинника"}), 400
 
-# ========== ФУНКЦИИ ДЛЯ ПЕСЕН ==========
+        prompt = build_prompt(data)
+        result_text = deepseek_completion(prompt)
+
+        if result_text is None:
+            return jsonify({"error": "Ошибка при обращении к нейросети"}), 500
+
+        try:
+            variants = json.loads(result_text)
+            if isinstance(variants, list) and len(variants) == 3 and all(isinstance(v, str) for v in variants):
+                return jsonify({"variants": variants})
+            else:
+                print("Некорректный формат ответа:", result_text)
+                return jsonify({
+                    "variants": [
+                        "Не удалось сгенерировать поздравление в нужном формате.",
+                        "Попробуйте ещё раз позже.",
+                        "Либо обратитесь в поддержку."
+                    ]
+                })
+        except json.JSONDecodeError:
+            print("Ошибка парсинга JSON. Ответ:", result_text)
+            return jsonify({
+                "variants": [
+                    "Не удалось сгенерировать поздравление в нужном формате.",
+                    "Попробуйте ещё раз позже.",
+                    "Либо обратитесь в поддержку."
+                ]
+            })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН ==========
 def generate_song_lyrics(data):
     """Генерирует текст песни через DeepSeek (с учётом жанра)"""
     genre = data.get('songGenre', 'pop')
+
     prompt = f"""Ты — поэт-песенник. Напиши текст песни на русском языке в жанре {genre} в честь дня рождения для человека по имени {data['name']}.
 
 Детали:
@@ -84,12 +146,22 @@ def generate_song_lyrics(data):
 - Черты характера: {data.get('traits', 'замечательный человек')}
 - Мечты: {data.get('dreams', 'счастье')}
 
-Структура: [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]. Текст тёплый, персонализированный, с упоминанием увлечений.
-Верни ТОЛЬКО текст с тегами."""
-    lyrics = deepseek_completion(prompt, max_tokens=800)
-    if lyrics is None:
-        # Запасной вариант
-        return f"""[Verse 1]
+Требования к структуре:
+[Verse 1] — первый куплет
+[Chorus] — припев (повторяется)
+[Verse 2] — второй куплет
+[Bridge] — мост/переход
+[Outro] — завершение
+
+Текст должен быть тёплым, персонализированным, с упоминанием увлечений и черт характера. 
+Припев должен быть запоминающимся. Используй простой, понятный язык.
+Верни ТОЛЬКО текст песни с указанными тегами, без лишних пояснений.
+"""
+    try:
+        lyrics = deepseek_completion(prompt, max_tokens=800)
+        if lyrics is None:
+            # Запасной вариант
+            return f"""[Verse 1]
 С днём рождения, {data['name']}, сегодня твой день,
 В этот праздник светлый нам грустить совсем не лень.
 Ты {data.get('traits', 'замечательный')}, это знаем мы давно,
@@ -100,11 +172,15 @@ def generate_song_lyrics(data):
 Как яркий свет в окне, как утренняя тишь.
 Твой {data.get('hobby', 'любимый досуг')} — источник вдохновения,
 Желаем счастья, мира и везения!"""
-    return lyrics
+        return lyrics
+    except Exception as e:
+        print(f"Ошибка генерации текста песни: {e}")
+        return None
 
 def create_udio_task(lyrics, data):
     """
-    Отправляет задачу на генерацию музыки через piapi (точный формат из примеров).
+    Отправляет задачу на генерацию музыки через piapi (API v1).
+    Возвращает task_id или None.
     """
     headers = {
         "x-api-key": PIAPI_API_KEY,
@@ -115,13 +191,13 @@ def create_udio_task(lyrics, data):
     genre = data.get('songGenre', 'pop')
     hobby = data.get('hobby', '')
 
-    # Формируем краткий промпт (как gpt_description_prompt в примере)
+    # Краткий промпт для описания стиля
     prompt = f"A {genre} birthday song for {name}, {hobby}"
 
-    # Точный формат payload на основе примеров
+    # Точное соответствие спецификации
     payload = {
         "model": "music-u",
-        "task_type": "generate_music_custom",  # именно этот тип для своих текстов
+        "task_type": "generate_music_custom",
         "input": {
             "lyrics_type": "user",
             "lyrics": lyrics,
@@ -130,21 +206,25 @@ def create_udio_task(lyrics, data):
         }
     }
 
+    # 👇 Отладочный вывод (будет виден в логах Timeweb)
+    print(f"Sending payload to piapi: {json.dumps(payload, ensure_ascii=False)}")
+
     try:
         response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         result = response.json()
+        print(f"piapi response: {json.dumps(result, ensure_ascii=False)}")
         if result.get("code") == 200 and result.get("data", {}).get("task_id"):
             return result["data"]["task_id"]
         else:
-            print("Ошибка от piapi:", result)
+            print("Ошибка от piapi (код не 200 или нет task_id):", result)
             return None
     except Exception as e:
-        print(f"Ошибка при создании задачи: {e}")
+        print(f"Ошибка при создании задачи Udio: {e}")
         return None
 
 def get_udio_task_status(task_id):
-    """Проверяет статус задачи (GET /api/v1/task/{task_id})"""
+    """Проверяет статус задачи по task_id (GET /api/v1/task/{task_id})"""
     url = f"{PIAPI_BASE_URL}/task/{task_id}"
     headers = {"x-api-key": PIAPI_API_KEY}
 
@@ -170,6 +250,7 @@ def get_udio_task_status(task_id):
 
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
+    """Запускает генерацию песни: текст (DeepSeek) + задача в piapi"""
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
@@ -182,22 +263,29 @@ def generate_song():
     if not task_id:
         return jsonify({"error": "Не удалось создать задачу в piapi"}), 500
 
-    return jsonify({"task_id": task_id, "message": "Песня создаётся. Это займёт около 2 минут."})
+    return jsonify({
+        "task_id": task_id,
+        "message": "Песня создаётся. Это займёт около 2 минут."
+    })
 
 @app.route('/song_status/<task_id>', methods=['GET'])
 def song_status(task_id):
+    """Возвращает статус задачи по task_id"""
     status = get_udio_task_status(task_id)
     return jsonify(status)
 
 @app.route('/test_udio', methods=['POST'])
 def test_udio():
+    """Тестовый эндпоинт для проверки piapi (без генерации текста)"""
     data = request.get_json()
     name = data.get('name', 'друг')
     test_lyrics = f"""[Verse]
 С днём рождения, {name}!
 Пусть будет счастье вокруг.
 [Chorus]
-Это тестовая песня через piapi."""
+Это тестовая песня через piapi,
+Проверяем, как работает Udio."""
+
     task_id = create_udio_task(test_lyrics, data)
     if task_id:
         return jsonify({"task_id": task_id, "message": "Тестовая задача создана"})
