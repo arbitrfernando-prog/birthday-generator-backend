@@ -65,13 +65,11 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
     """Формирует детальный промпт для генерации трёх вариантов поздравления"""
-    # Определяем обращение в зависимости от пола
     if data['gender'] == 'female':
         dear = "Дорогая"
     else:
         dear = "Дорогой"
 
-    # Отношения с поздравляющим
     relationship_map = {
         'husband': 'муж', 'wife': 'жена', 'boyfriend': 'парень',
         'girlfriend': 'девушка', 'friend': 'друг/подруга',
@@ -79,7 +77,6 @@ def build_prompt(data):
     }
     relationship = relationship_map.get(data.get('relationship'), 'близкий человек')
 
-    # Семья (супруг, дети)
     family_parts = []
     if data.get('spouse'):
         family_parts.append(f"супруг(а) {data['spouse']}")
@@ -87,10 +84,8 @@ def build_prompt(data):
         family_parts.append(f"дети {data['children']}")
     family_text = f"Семья: {', '.join(family_parts)}. " if family_parts else ""
 
-    # Мечты
     dreams_text = f"Особая мечта: {data['dreams']}. " if data.get('dreams') else ""
 
-    # Стиль поздравления
     style_text = {
         'warm': 'тёплое, душевное, искреннее',
         'funny': 'с юмором, но доброе',
@@ -252,7 +247,8 @@ def create_udio_task(lyrics, data):
 
     payload = {
         "model": "music-u",
-        "task_type": "generate_music_custom",
+        # ✅ ИСПРАВЛЕНО: используем правильный тип задачи
+        "task_type": "generate_music",
         "input": {
             "lyrics_type": "user",
             "lyrics": lyrics,
