@@ -19,17 +19,17 @@ if not PIAPI_API_KEY:
 
 # --- Конфигурация piapi (актуальный эндпоинт) ---
 PIAPI_BASE_URL = "https://api.piapi.ai/api/v1"
-# 👇 ВОТ ЭТОТ URL — САМЫЙ ВАЖНЫЙ МОМЕНТ
 PIAPI_TASK_URL = f"{PIAPI_BASE_URL}/task"  # = https://api.piapi.ai/api/v1/task
 
 app = Flask(__name__)
-# Укажите ваши домены Tilda и локальный для тестов
+# Настройка CORS – укажите все ваши домены
 CORS(app, origins=[
     "http://localhost:5001",
     "https://pozdrav888.tilda.ws",
     "https://www.pozdrav888.tilda.ws",
     "https://pozdravit-ai.ru",
-    "https://www.pozdravit-ai.ru"
+    "https://www.pozdravit-ai.ru",
+    "https://arbitrfernando-prog-birthday-generator-backend-9bd2.twc1.net"
 ])
 
 # ========== ФУНКЦИЯ ДЛЯ ПРЯМОГО ВЫЗОВА DEEPSEEK ==========
@@ -65,10 +65,8 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
     """Формирует промпт для генерации трёх вариантов поздравления"""
-    # Обращение по полу
     dear = "Дорогая" if data['gender'] == 'female' else "Дорогой"
 
-    # Отношения
     relationship_map = {
         'husband': 'муж', 'wife': 'жена', 'boyfriend': 'парень',
         'girlfriend': 'девушка', 'friend': 'друг/подруга',
@@ -76,7 +74,6 @@ def build_prompt(data):
     }
     relationship = relationship_map.get(data.get('relationship'), 'близкий человек')
 
-    # Семья
     family_parts = []
     if data.get('spouse'):
         family_parts.append(f"супруг(а) {data['spouse']}")
@@ -84,10 +81,8 @@ def build_prompt(data):
         family_parts.append(f"дети {data['children']}")
     family_text = f"Семья: {', '.join(family_parts)}. " if family_parts else ""
 
-    # Мечты
     dreams_text = f"Особая мечта: {data['dreams']}. " if data.get('dreams') else ""
 
-    # Стиль
     style_text = {
         'warm': 'тёплое, душевное, искреннее',
         'funny': 'с юмором, но доброе',
@@ -121,7 +116,6 @@ def build_prompt(data):
 """
     return prompt
 
-# ========== ЭНДПОИНТЫ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 @app.route('/')
 def index():
     return jsonify({"message": "Генератор поздравлений API работает!"})
@@ -155,7 +149,6 @@ def generate():
         if result_text is None:
             return jsonify({"error": "Ошибка при обращении к нейросети"}), 500
 
-        # Парсим JSON-ответ
         try:
             variants = json.loads(result_text)
             if isinstance(variants, list) and len(variants) == 3 and all(isinstance(v, str) for v in variants):
@@ -230,8 +223,9 @@ def generate_song_lyrics(data):
 
 def create_udio_task(lyrics, data):
     """
-    Отправляет задачу на генерацию музыки через piapi.
-    👇 ЗДЕСЬ ИСПОЛЬЗУЕТСЯ НОВЫЙ ПРАВИЛЬНЫЙ URL
+    Отправляет задачу на генерацию музыки через piapi (API v1).
+    Соответствует спецификации OpenAPI.
+    Возвращает task_id или None.
     """
     headers = {
         "x-api-key": PIAPI_API_KEY,
@@ -242,27 +236,26 @@ def create_udio_task(lyrics, data):
     genre = data.get('songGenre', 'pop')
     hobby = data.get('hobby', '')
 
+    # Краткий промпт для описания стиля
+    prompt = f"A {genre} birthday song for {name}, {hobby}"
+
+    # Точное соответствие спецификации
     payload = {
-        "model": "udio-130",
-        "task_type": "music-generation",
+        "model": "music-u",                     # обязательно
+        "task_type": "generate_music_custom",    # обязательно, т.к. передаём свой текст
         "input": {
-            "prompt": f"A {genre} birthday song for {name}, {hobby}",
-            "custom_lyrics": lyrics,
-            "title": f"Поздравление для {name}",
-            "make_instrumental": False,
-            "tags": genre,
-            "seed": -1
-        },
-        "config": {
-            "service_mode": "public"
+            "lyrics_type": "user",                # указываем, что текст предоставлен пользователем
+            "lyrics": lyrics,                      # полный текст песни
+            "prompt": prompt,                       # краткое описание (необязательно, но рекомендуется)
+            "seed": -1                               # случайная генерация
         }
     }
 
     try:
-        # 👇 ВОТ ТУТ МЫ ИСПОЛЬЗУЕМ ПЕРЕМЕННУЮ С НОВЫМ URL
         response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         result = response.json()
+        # Проверяем успешность по коду и наличию task_id
         if result.get("code") == 200 and result.get("data", {}).get("task_id"):
             return result["data"]["task_id"]
         else:
@@ -273,7 +266,7 @@ def create_udio_task(lyrics, data):
         return None
 
 def get_udio_task_status(task_id):
-    """Проверяет статус задачи по task_id (GET /task/{task_id})"""
+    """Проверяет статус задачи по task_id (GET /api/v1/task/{task_id})"""
     url = f"{PIAPI_BASE_URL}/task/{task_id}"
     headers = {"x-api-key": PIAPI_API_KEY}
 
@@ -285,6 +278,7 @@ def get_udio_task_status(task_id):
             task_data = data.get("data", {})
             status = task_data.get("status")
             if status == "completed":
+                # Предполагаем, что аудио-URL лежит в result.audio_url
                 audio_url = task_data.get("result", {}).get("audio_url")
                 title = task_data.get("result", {}).get("title") or "Персональная песня"
                 return {"ready": True, "audio_url": audio_url, "title": title}
@@ -297,7 +291,6 @@ def get_udio_task_status(task_id):
     except Exception as e:
         return {"ready": False, "error": str(e)}
 
-# ========== ЭНДПОИНТЫ ДЛЯ ПЕСЕН ==========
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
     """Запускает генерацию песни: текст (DeepSeek) + задача в piapi"""
