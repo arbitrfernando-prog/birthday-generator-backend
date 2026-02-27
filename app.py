@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Загружаем переменные окружения из .env
 load_dotenv()
 
-# --- Проверка наличия обязательных ключей ---
+# --- Проверка наличия обязательных ключей ----
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY")
 
