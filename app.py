@@ -1,7 +1,8 @@
 import os
 import json
+import uuid
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -19,6 +20,10 @@ if not MINIMAX_API_KEY:
 
 # --- Конфигурация MiniMax Music API ---
 MINIMAX_MUSIC_URL = "https://api.minimax.io/v1/music_generation"
+
+# --- Временная папка для сохранения аудиофайлов ---
+TEMP_AUDIO_DIR = "/tmp/audio"
+os.makedirs(TEMP_AUDIO_DIR, exist_ok=True)
 
 app = Flask(__name__)
 # Настройка CORS – добавьте все ваши домены
@@ -230,7 +235,7 @@ def generate_song_lyrics(data):
 def create_minimax_task(lyrics, data):
     """
     Отправляет задачу на генерацию музыки через MiniMax Music API.
-    Возвращает URL сгенерированного аудио или None.
+    Скачивает полученный файл и возвращает путь к локальному эндпоинту.
     """
     headers = {
         "Authorization": f"Bearer {MINIMAX_API_KEY}",
@@ -244,7 +249,6 @@ def create_minimax_task(lyrics, data):
 
     prompt = f"{genre} birthday song for {name}, {traits}, likes {hobby}."
 
-    # Исправленный payload – без audio_setting
     payload = {
         "model": "music-2.5",
         "prompt": prompt,
@@ -270,10 +274,23 @@ def create_minimax_task(lyrics, data):
 
         if result.get("base_resp", {}).get("status_code") == 0:
             audio_data = result.get("data", {})
-            # Пробуем получить audio_url из разных возможных полей
             audio_url = audio_data.get("audio") or audio_data.get("url")
             if audio_url:
-                return audio_url
+                # Скачиваем файл
+                try:
+                    audio_response = requests.get(audio_url, timeout=60)
+                    audio_response.raise_for_status()
+                    # Генерируем уникальное имя файла
+                    filename = f"{uuid.uuid4()}.mp3"
+                    filepath = os.path.join(TEMP_AUDIO_DIR, filename)
+                    with open(filepath, 'wb') as f:
+                        f.write(audio_response.content)
+                    print(f"Аудио сохранено как {filepath}")
+                    # Возвращаем путь к локальному эндпоинту
+                    return f"/audio/{filename}"
+                except Exception as e:
+                    print(f"Ошибка при скачивании аудио: {e}")
+                    return None
             else:
                 print("Ошибка: в ответе нет аудио.")
                 return None
@@ -287,7 +304,7 @@ def create_minimax_task(lyrics, data):
 
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
-    """Запускает генерацию песни: текст (DeepSeek) + генерация в MiniMax"""
+    """Запускает генерацию песни: текст (DeepSeek) + генерация в MiniMax + локальное сохранение"""
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
@@ -296,13 +313,14 @@ def generate_song():
     if lyrics is None:
         return jsonify({"error": "Не удалось сгенерировать текст песни"}), 500
 
-    audio_url = create_minimax_task(lyrics, data)
-    if not audio_url:
+    audio_path = create_minimax_task(lyrics, data)
+    if not audio_path:
         return jsonify({"error": "Не удалось создать задачу в MiniMax"}), 500
 
+    # Возвращаем ссылку на локальный эндпоинт (полный URL формируется на фронтенде)
     return jsonify({
         "ready": True,
-        "audio_url": audio_url,
+        "audio_url": audio_path,  # это относительный путь, например "/audio/uuid.mp3"
         "title": f"Персональная песня для {data['name']}",
         "message": "Песня успешно сгенерирована!"
     })
@@ -318,11 +336,20 @@ def test_minimax():
 [Chorus]
 Это тестовая песня через MiniMax."""
 
-    audio_url = create_minimax_task(test_lyrics, data)
-    if audio_url:
-        return jsonify({"audio_url": audio_url, "message": "Тестовая задача выполнена"})
+    audio_path = create_minimax_task(test_lyrics, data)
+    if audio_path:
+        return jsonify({"audio_url": audio_path, "message": "Тестовая задача выполнена"})
     else:
         return jsonify({"error": "Не удалось создать тестовую задачу"}), 500
+
+@app.route('/audio/<filename>')
+def serve_audio(filename):
+    """Отдаёт ранее сохранённый аудиофайл с правильными заголовками"""
+    filepath = os.path.join(TEMP_AUDIO_DIR, filename)
+    if not os.path.exists(filepath):
+        return jsonify({"error": "Файл не найден"}), 404
+    # Отдаём файл, браузер будет его проигрывать
+    return send_file(filepath, mimetype='audio/mpeg', as_attachment=False)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
