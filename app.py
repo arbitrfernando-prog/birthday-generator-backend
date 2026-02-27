@@ -242,16 +242,13 @@ def create_minimax_task(lyrics, data):
     hobby = data.get('hobby', '')
     traits = data.get('traits', '')
 
-    # Формируем краткий промпт для описания стиля
     prompt = f"{genre} birthday song for {name}, {traits}, likes {hobby}."
 
+    # Исправленный payload – без audio_setting
     payload = {
         "model": "music-2.5",
         "prompt": prompt,
-        "lyrics": lyrics,
-        "audio_setting": {
-            "format": "url"
-        }
+        "lyrics": lyrics
     }
 
     print(f"Sending payload to MiniMax: {json.dumps(payload, ensure_ascii=False)}")
@@ -264,19 +261,17 @@ def create_minimax_task(lyrics, data):
             headers=headers,
             timeout=120
         )
-        # Выводим статус и текст ответа В ЛЮБОМ СЛУЧАЕ
         print(f"MiniMax status code: {response.status_code}")
         print(f"MiniMax raw response: {response.text}")
 
-        response.raise_for_status()  # выбросит исключение, если статус не 2xx
-
+        response.raise_for_status()
         result = response.json()
         print(f"MiniMax parsed response: {json.dumps(result, ensure_ascii=False)}")
 
-        # Проверяем успешность ответа по статус-коду в теле ответа
         if result.get("base_resp", {}).get("status_code") == 0:
             audio_data = result.get("data", {})
-            audio_url = audio_data.get("audio")  # При format: "url" здесь будет ссылка
+            # Пробуем получить audio_url из разных возможных полей
+            audio_url = audio_data.get("audio") or audio_data.get("url")
             if audio_url:
                 return audio_url
             else:
@@ -286,9 +281,6 @@ def create_minimax_task(lyrics, data):
             error_msg = result.get("base_resp", {}).get("status_msg", "Неизвестная ошибка")
             print(f"Ошибка от MiniMax: {error_msg}")
             return None
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP ошибка от MiniMax: {e}")
-        return None
     except Exception as e:
         print(f"Исключение при создании задачи в MiniMax: {e}")
         return None
@@ -300,17 +292,14 @@ def generate_song():
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
 
-    # 1. Генерируем текст песни
     lyrics = generate_song_lyrics(data)
     if lyrics is None:
         return jsonify({"error": "Не удалось сгенерировать текст песни"}), 500
 
-    # 2. Отправляем задачу в MiniMax
     audio_url = create_minimax_task(lyrics, data)
     if not audio_url:
         return jsonify({"error": "Не удалось создать задачу в MiniMax"}), 500
 
-    # MiniMax возвращает результат сразу, поэтому отдаём готовую ссылку
     return jsonify({
         "ready": True,
         "audio_url": audio_url,
