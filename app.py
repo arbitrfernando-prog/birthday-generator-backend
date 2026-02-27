@@ -2,6 +2,7 @@ import os
 import json
 import time
 import requests
+import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -9,18 +10,17 @@ from dotenv import load_dotenv
 # Загружаем переменные окружения из .env
 load_dotenv()
 
-# --- Проверка наличия обязательных ключей ----
+# --- Проверка наличия обязательных ключей ---
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-GPTUNNEL_API_KEY = os.getenv("GPTUNNEL_API_KEY")
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY")
 
 if not DEEPSEEK_API_KEY:
     raise ValueError("Отсутствует переменная окружения DEEPSEEK_API_KEY")
-if not GPTUNNEL_API_KEY:
-    raise ValueError("Отсутствует переменная окружения GPTUNNEL_API_KEY")
+if not MINIMAX_API_KEY:
+    raise ValueError("Отсутствует переменная окружения MINIMAX_API_KEY")
 
-# --- Конфигурация GPTunnel Suno ---
-SUNO_CREATE_URL = "https://gptunnel.ru/v1/media/create"
-SUNO_RESULT_URL = "https://gptunnel.ru/v1/media/result"
+# --- Конфигурация MiniMax Music API ---
+MINIMAX_MUSIC_URL = "https://api.minimax.io/v1/music_generation"
 
 app = Flask(__name__)
 # Настройка CORS – добавьте все ваши домены
@@ -65,7 +65,7 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
-    """Формирует промпт для генерации трёх вариантов поздравления"""
+    """Формирует промпт для генерации трёх вариантов поздравления (без изменений)"""
     if data['gender'] == 'female':
         dear = "Дорогая"
     else:
@@ -141,7 +141,7 @@ def test():
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    """Основной эндпоинт для текстовых поздравлений через DeepSeek"""
+    """Основной эндпоинт для текстовых поздравлений через DeepSeek (без изменений)"""
     try:
         data = request.get_json()
         if not data or 'name' not in data:
@@ -184,9 +184,9 @@ def generate():
         print(f"Ошибка в /generate: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН (GPTunnel Suno) ==========
+# ========== НОВЫЕ ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН (MiniMax Music) ==========
 def generate_song_lyrics(data):
-    """Генерирует текст песни через DeepSeek (с учётом жанра)"""
+    """Генерирует текст песни через DeepSeek (с учётом жанра) - БЕЗ ИЗМЕНЕНИЙ"""
     genre = data.get('songGenre', 'pop')
 
     prompt = f"""Ты — поэт-песенник. Напиши текст песни на русском языке в жанре {genre} в честь дня рождения для человека по имени {data['name']}.
@@ -229,13 +229,13 @@ def generate_song_lyrics(data):
         print(f"Ошибка генерации текста песни: {e}")
         return None
 
-def create_suno_task(lyrics, data):
+def create_minimax_task(lyrics, data):
     """
-    Отправляет задачу на генерацию музыки через GPTunnel Suno API.
-    Возвращает task_id или None.
+    Отправляет задачу на генерацию музыки через MiniMax Music API.
+    Возвращает URL сгенерированного аудио или None.
     """
     headers = {
-        "Authorization": GPTUNNEL_API_KEY,
+        "Authorization": f"Bearer {MINIMAX_API_KEY}",
         "Content-Type": "application/json"
     }
 
@@ -244,126 +244,97 @@ def create_suno_task(lyrics, data):
     hobby = data.get('hobby', '')
     traits = data.get('traits', '')
 
-    # Формируем промпт для Suno. Включаем информацию о человеке.
-    # Suno понимает русский язык, можно писать по-русски.
-    prompt = f"Создай {genre} песню ко дню рождения для {name}. Характер: {traits}. Увлечения: {hobby}. Текст песни: {lyrics}"
+    # Формируем промпт для MiniMax. Это краткое описание стиля и настроения.
+    # Например: "A pop birthday song for a kind person who likes reading."
+    prompt = f"{genre} birthday song for {name}, {traits}, likes {hobby}."
 
+    # Структура запроса точно соответствует документации [citation:5]
     payload = {
-        "model": "suno",
-        "prompt": prompt
+        "model": "music-2.5",  # Актуальная модель для генерации песен [citation:1][citation:5]
+        "prompt": prompt,
+        "lyrics": lyrics,       # Ваш текст песни с тегами [Verse], [Chorus]
+        "audio_setting": {
+            "format": "url"     # Просим вернуть ссылку на аудио, а не hex-код [citation:5]
+        }
     }
 
-    print(f"Sending payload to GPTunnel Suno: {json.dumps(payload, ensure_ascii=False)}")
-    print("Отправка запроса на создание задачи...")
+    print(f"Sending payload to MiniMax: {json.dumps(payload, ensure_ascii=False)}")
+    print("Отправка запроса на создание музыки...")
 
     try:
         response = requests.post(
-            SUNO_CREATE_URL,
+            MINIMAX_MUSIC_URL,
             json=payload,
             headers=headers,
-            timeout=30
+            timeout=120  # Увеличенный таймаут для генерации
         )
         response.raise_for_status()
         result = response.json()
-        print(f"GPTunnel create response: {json.dumps(result, ensure_ascii=False)}")
+        print(f"MiniMax response: {json.dumps(result, ensure_ascii=False)}")
 
-        # Проверяем код ответа и получаем ID задачи
-        if result.get("code") == 0 and result.get("id"):
-            return result["id"]
+        # Проверяем успешность ответа [citation:5]
+        if result.get("base_resp", {}).get("status_code") == 0:
+            audio_data = result.get("data", {})
+            audio_url = audio_data.get("audio")  # При format: "url" здесь будет ссылка
+            if audio_url:
+                return audio_url
+            else:
+                print("Ошибка: в ответе нет аудио.")
+                return None
         else:
-            print("Ошибка при создании задачи в GPTunnel:", result)
+            error_msg = result.get("base_resp", {}).get("status_msg", "Неизвестная ошибка")
+            print(f"Ошибка от MiniMax: {error_msg}")
             return None
     except Exception as e:
-        print(f"Ошибка при создании задачи в GPTunnel: {e}")
+        print(f"Ошибка при создании задачи в MiniMax: {e}")
         return None
-
-def get_suno_task_status(task_id):
-    """
-    Проверяет статус задачи по task_id через GPTunnel API.
-    Возвращает словарь с ready, audio_url, title или ошибку.
-    """
-    headers = {
-        "Authorization": GPTUNNEL_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "task_id": task_id
-    }
-
-    try:
-        response = requests.post(
-            SUNO_RESULT_URL,
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
-        response.raise_for_status()
-        data = response.json()
-        print(f"GPTunnel result response: {json.dumps(data, ensure_ascii=False)}")
-
-        if data.get("code") == 0:
-            status = data.get("status")
-            if status == "done":
-                # Результат приходит как массив в поле "result"
-                result_array = data.get("result", [])
-                if result_array and len(result_array) > 0:
-                    # Берём первый элемент (обычно это и есть готовая песня)
-                    song_data = result_array[0]
-                    audio_url = song_data.get("audio_url")
-                    # Заголовок можно сгенерировать или взять из мета-данных
-                    title = f"Персональная песня"
-                    return {"ready": True, "audio_url": audio_url, "title": title}
-                else:
-                    return {"ready": False, "status": status, "error": "Нет данных в результате"}
-            elif status in ["failed", "error"]:
-                return {"ready": False, "error": f"Генерация не удалась: {data}"}
-            else:
-                return {"ready": False, "status": status}
-        else:
-            return {"ready": False, "error": f"Ошибка от GPTunnel: {data}"}
-    except Exception as e:
-        return {"ready": False, "error": str(e)}
 
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
-    """Запускает генерацию песни: текст (DeepSeek) + задача в GPTunnel Suno"""
+    """Запускает генерацию песни: текст (DeepSeek) + генерация в MiniMax"""
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
 
+    # 1. Генерируем текст песни (как и раньше)
     lyrics = generate_song_lyrics(data)
     if lyrics is None:
         return jsonify({"error": "Не удалось сгенерировать текст песни"}), 500
 
-    task_id = create_suno_task(lyrics, data)
-    if not task_id:
-        return jsonify({"error": "Не удалось создать задачу в GPTunnel"}), 500
+    # 2. Отправляем задачу в MiniMax
+    audio_url = create_minimax_task(lyrics, data)
+    if not audio_url:
+        return jsonify({"error": "Не удалось создать задачу в MiniMax"}), 500
 
+    # MiniMax возвращает результат сразу, поэтому статус не нужен. Отдаём готовую ссылку.
     return jsonify({
-        "task_id": task_id,
-        "message": "Песня создаётся. Это займёт около 2 минут."
+        "ready": True,
+        "audio_url": audio_url,
+        "title": f"Персональная песня для {data['name']}",
+        "message": "Песня успешно сгенерирована!"
     })
 
-@app.route('/song_status/<task_id>', methods=['GET'])
-def song_status(task_id):
-    """Возвращает статус задачи по task_id"""
-    status = get_suno_task_status(task_id)
-    return jsonify(status)
+# Эндпоинт song_status больше не нужен, так как MiniMax возвращает результат синхронно.
+# Но для совместимости с фронтендом можно оставить простой заглушку.
+@app.route('/song_status/<path:audio_url>', methods=['GET'])
+def song_status_fake(audio_url):
+    """Заглушка для совместимости (если фронтенд ждёт проверки статуса)"""
+    return jsonify({"ready": True, "audio_url": audio_url, "title": "Персональная песня"})
 
-@app.route('/test_suno', methods=['POST'])
-def test_suno():
-    """Тестовый эндпоинт для проверки GPTunnel Suno (без генерации текста)"""
+@app.route('/test_minimax', methods=['POST'])
+def test_minimax():
+    """Тестовый эндпоинт для проверки MiniMax (без генерации текста)"""
     data = request.get_json()
     name = data.get('name', 'друг')
     test_lyrics = f"""[Verse]
 С днём рождения, {name}!
 Пусть будет счастье вокруг.
 [Chorus]
-Это тестовая песня через GPTunnel Suno."""
+Это тестовая песня через MiniMax."""
 
-    task_id = create_suno_task(test_lyrics, data)
-    if task_id:
-        return jsonify({"task_id": task_id, "message": "Тестовая задача создана"})
+    audio_url = create_minimax_task(test_lyrics, data)
+    if audio_url:
+        return jsonify({"audio_url": audio_url, "message": "Тестовая задача выполнена"})
     else:
         return jsonify({"error": "Не удалось создать тестовую задачу"}), 500
 
