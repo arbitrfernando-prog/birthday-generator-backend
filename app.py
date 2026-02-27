@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -8,18 +9,18 @@ from dotenv import load_dotenv
 # Загружаем переменные окружения из .env
 load_dotenv()
 
-# --- Проверка наличия обязательных ключей- ---
+# --- Проверка наличия обязательных ключей ---
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-PIAPI_API_KEY = os.getenv("PIAPI_API_KEY")
+GPTUNNEL_API_KEY = os.getenv("GPTUNNEL_API_KEY")
 
 if not DEEPSEEK_API_KEY:
     raise ValueError("Отсутствует переменная окружения DEEPSEEK_API_KEY")
-if not PIAPI_API_KEY:
-    raise ValueError("Отсутствует переменная окружения PIAPI_API_KEY")
+if not GPTUNNEL_API_KEY:
+    raise ValueError("Отсутствует переменная окружения GPTUNNEL_API_KEY")
 
-# --- Конфигурация piapi (актуальный эндпоинт) ---
-PIAPI_TASK_URL = "https://api.piapi.ai/api/v1/task"
-PIAPI_BASE_URL = "https://api.piapi.ai/api/v1"
+# --- Конфигурация GPTunnel Suno ---
+SUNO_CREATE_URL = "https://gptunnel.ru/v1/media/create"
+SUNO_RESULT_URL = "https://gptunnel.ru/v1/media/result"
 
 app = Flask(__name__)
 # Настройка CORS – добавьте все ваши домены
@@ -29,7 +30,7 @@ CORS(app, origins=[
     "https://www.pozdrav888.tilda.ws",
     "https://pozdravit-ai.ru",
     "https://www.pozdravit-ai.ru",
-    "https://arbitrfernando-prog-birthday-generator-backend-9bd2.twc1.net"
+    "https://arbitrfernando-prog-birthday-generator-backend-d412.twc1.net"
 ])
 
 # ========== ФУНКЦИЯ ДЛЯ ПРЯМОГО ВЫЗОВА DEEPSEEK ==========
@@ -64,7 +65,7 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
-    """Формирует детальный промпт для генерации трёх вариантов поздравления"""
+    """Формирует промпт для генерации трёх вариантов поздравления"""
     if data['gender'] == 'female':
         dear = "Дорогая"
     else:
@@ -147,16 +148,15 @@ def generate():
             return jsonify({"error": "Не указано имя именинника"}), 400
 
         prompt = build_prompt(data)
-        print(f"Sending prompt to DeepSeek: {prompt[:200]}...")  # отладка
+        print(f"Sending prompt to DeepSeek: {prompt[:200]}...")
 
         result_text = deepseek_completion(prompt)
 
         if result_text is None:
             return jsonify({"error": "Ошибка при обращении к нейросети"}), 500
 
-        print(f"DeepSeek response: {result_text[:200]}...")  # отладка
+        print(f"DeepSeek response: {result_text[:200]}...")
 
-        # Пытаемся распарсить JSON
         try:
             variants = json.loads(result_text)
             if isinstance(variants, list) and len(variants) == 3 and all(isinstance(v, str) for v in variants):
@@ -184,7 +184,7 @@ def generate():
         print(f"Ошибка в /generate: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН ==========
+# ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН (GPTunnel Suno) ==========
 def generate_song_lyrics(data):
     """Генерирует текст песни через DeepSeek (с учётом жанра)"""
     genre = data.get('songGenre', 'pop')
@@ -229,85 +229,104 @@ def generate_song_lyrics(data):
         print(f"Ошибка генерации текста песни: {e}")
         return None
 
-def create_udio_task(lyrics, data):
+def create_suno_task(lyrics, data):
     """
-    Отправляет задачу на генерацию музыки через piapi (API v1).
-    Возвращает task_id или None. Подробно логирует ответ.
+    Отправляет задачу на генерацию музыки через GPTunnel Suno API.
+    Возвращает task_id или None.
     """
     headers = {
-        "x-api-key": PIAPI_API_KEY,
+        "Authorization": GPTUNNEL_API_KEY,
         "Content-Type": "application/json"
     }
 
     name = data['name']
     genre = data.get('songGenre', 'pop')
     hobby = data.get('hobby', '')
+    traits = data.get('traits', '')
 
-    prompt = f"A {genre} birthday song for {name}, {hobby}"
+    # Формируем промпт для Suno. Включаем информацию о человеке.
+    # Suno понимает русский язык, можно писать по-русски.
+    prompt = f"Создай {genre} песню ко дню рождения для {name}. Характер: {traits}. Увлечения: {hobby}. Текст песни: {lyrics}"
 
     payload = {
-        "model": "music-u",
-        # ✅ ИСПРАВЛЕНО: используем правильный тип задачи
-        "task_type": "generate_music",
-        "input": {
-            "lyrics_type": "user",
-            "lyrics": lyrics,
-            "prompt": prompt,
-            "seed": -1
-        }
+        "model": "suno",
+        "prompt": prompt
     }
 
-    print(f"Sending payload to piapi: {json.dumps(payload, ensure_ascii=False)}")
+    print(f"Sending payload to GPTunnel Suno: {json.dumps(payload, ensure_ascii=False)}")
+    print("Отправка запроса на создание задачи...")
 
     try:
-        response = requests.post(PIAPI_TASK_URL, json=payload, headers=headers, timeout=300)
-        # Выводим статус и тело ответа ВСЕГДА
-        print(f"piapi status: {response.status_code}")
-        print(f"piapi response body: {response.text}")
-
-        response.raise_for_status()  # выбросит исключение, если статус не 2xx
-
+        response = requests.post(
+            SUNO_CREATE_URL,
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+        response.raise_for_status()
         result = response.json()
-        if result.get("code") == 200 and result.get("data", {}).get("task_id"):
-            return result["data"]["task_id"]
+        print(f"GPTunnel create response: {json.dumps(result, ensure_ascii=False)}")
+
+        # Проверяем код ответа и получаем ID задачи
+        if result.get("code") == 0 and result.get("id"):
+            return result["id"]
         else:
-            print("Ошибка от piapi (код не 200 или нет task_id):", result)
+            print("Ошибка при создании задачи в GPTunnel:", result)
             return None
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP ошибка от piapi: {e}. Тело ответа: {response.text if 'response' in locals() else 'нет'}")
-        return None
     except Exception as e:
-        print(f"Ошибка при создании задачи Udio: {e}")
+        print(f"Ошибка при создании задачи в GPTunnel: {e}")
         return None
 
-def get_udio_task_status(task_id):
-    """Проверяет статус задачи по task_id (GET /api/v1/task/{task_id})"""
-    url = f"{PIAPI_BASE_URL}/task/{task_id}"
-    headers = {"x-api-key": PIAPI_API_KEY}
+def get_suno_task_status(task_id):
+    """
+    Проверяет статус задачи по task_id через GPTunnel API.
+    Возвращает словарь с ready, audio_url, title или ошибку.
+    """
+    headers = {
+        "Authorization": GPTUNNEL_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "task_id": task_id
+    }
 
     try:
-        response = requests.get(url, headers=headers, timeout=30)
+        response = requests.post(
+            SUNO_RESULT_URL,
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
         response.raise_for_status()
         data = response.json()
-        if data.get("code") == 200:
-            task_data = data.get("data", {})
-            status = task_data.get("status")
-            if status == "completed":
-                audio_url = task_data.get("result", {}).get("audio_url")
-                title = task_data.get("result", {}).get("title") or "Персональная песня"
-                return {"ready": True, "audio_url": audio_url, "title": title}
-            elif status == "failed":
-                return {"ready": False, "error": "Генерация не удалась"}
+        print(f"GPTunnel result response: {json.dumps(data, ensure_ascii=False)}")
+
+        if data.get("code") == 0:
+            status = data.get("status")
+            if status == "done":
+                # Результат приходит как массив в поле "result"
+                result_array = data.get("result", [])
+                if result_array and len(result_array) > 0:
+                    # Берём первый элемент (обычно это и есть готовая песня)
+                    song_data = result_array[0]
+                    audio_url = song_data.get("audio_url")
+                    # Заголовок можно сгенерировать или взять из мета-данных
+                    title = f"Персональная песня"
+                    return {"ready": True, "audio_url": audio_url, "title": title}
+                else:
+                    return {"ready": False, "status": status, "error": "Нет данных в результате"}
+            elif status in ["failed", "error"]:
+                return {"ready": False, "error": f"Генерация не удалась: {data}"}
             else:
                 return {"ready": False, "status": status}
         else:
-            return {"ready": False, "error": "Ошибка от piapi"}
+            return {"ready": False, "error": f"Ошибка от GPTunnel: {data}"}
     except Exception as e:
         return {"ready": False, "error": str(e)}
 
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
-    """Запускает генерацию песни: текст (DeepSeek) + задача в piapi"""
+    """Запускает генерацию песни: текст (DeepSeek) + задача в GPTunnel Suno"""
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
@@ -316,9 +335,9 @@ def generate_song():
     if lyrics is None:
         return jsonify({"error": "Не удалось сгенерировать текст песни"}), 500
 
-    task_id = create_udio_task(lyrics, data)
+    task_id = create_suno_task(lyrics, data)
     if not task_id:
-        return jsonify({"error": "Не удалось создать задачу в piapi"}), 500
+        return jsonify({"error": "Не удалось создать задачу в GPTunnel"}), 500
 
     return jsonify({
         "task_id": task_id,
@@ -328,22 +347,21 @@ def generate_song():
 @app.route('/song_status/<task_id>', methods=['GET'])
 def song_status(task_id):
     """Возвращает статус задачи по task_id"""
-    status = get_udio_task_status(task_id)
+    status = get_suno_task_status(task_id)
     return jsonify(status)
 
-@app.route('/test_udio', methods=['POST'])
-def test_udio():
-    """Тестовый эндпоинт для проверки piapi (без генерации текста)"""
+@app.route('/test_suno', methods=['POST'])
+def test_suno():
+    """Тестовый эндпоинт для проверки GPTunnel Suno (без генерации текста)"""
     data = request.get_json()
     name = data.get('name', 'друг')
     test_lyrics = f"""[Verse]
 С днём рождения, {name}!
 Пусть будет счастье вокруг.
 [Chorus]
-Это тестовая песня через piapi,
-Проверяем, как работает Udio."""
+Это тестовая песня через GPTunnel Suno."""
 
-    task_id = create_udio_task(test_lyrics, data)
+    task_id = create_suno_task(test_lyrics, data)
     if task_id:
         return jsonify({"task_id": task_id, "message": "Тестовая задача создана"})
     else:
