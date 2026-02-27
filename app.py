@@ -1,8 +1,6 @@
 import os
 import json
-import time
 import requests
-import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -65,7 +63,7 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
-    """Формирует промпт для генерации трёх вариантов поздравления (без изменений)"""
+    """Формирует детальный промпт для генерации трёх вариантов поздравления"""
     if data['gender'] == 'female':
         dear = "Дорогая"
     else:
@@ -141,7 +139,7 @@ def test():
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    """Основной эндпоинт для текстовых поздравлений через DeepSeek (без изменений)"""
+    """Основной эндпоинт для текстовых поздравлений через DeepSeek"""
     try:
         data = request.get_json()
         if not data or 'name' not in data:
@@ -184,9 +182,9 @@ def generate():
         print(f"Ошибка в /generate: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== НОВЫЕ ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН (MiniMax Music) ==========
+# ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН (MiniMax Music) ==========
 def generate_song_lyrics(data):
-    """Генерирует текст песни через DeepSeek (с учётом жанра) - БЕЗ ИЗМЕНЕНИЙ"""
+    """Генерирует текст песни через DeepSeek (с учётом жанра)"""
     genre = data.get('songGenre', 'pop')
 
     prompt = f"""Ты — поэт-песенник. Напиши текст песни на русском языке в жанре {genre} в честь дня рождения для человека по имени {data['name']}.
@@ -244,17 +242,15 @@ def create_minimax_task(lyrics, data):
     hobby = data.get('hobby', '')
     traits = data.get('traits', '')
 
-    # Формируем промпт для MiniMax. Это краткое описание стиля и настроения.
-    # Например: "A pop birthday song for a kind person who likes reading."
+    # Формируем краткий промпт для описания стиля
     prompt = f"{genre} birthday song for {name}, {traits}, likes {hobby}."
 
-    # Структура запроса точно соответствует документации [citation:5]
     payload = {
-        "model": "music-2.5",  # Актуальная модель для генерации песен [citation:1][citation:5]
+        "model": "music-2.5",
         "prompt": prompt,
-        "lyrics": lyrics,       # Ваш текст песни с тегами [Verse], [Chorus]
+        "lyrics": lyrics,
         "audio_setting": {
-            "format": "url"     # Просим вернуть ссылку на аудио, а не hex-код [citation:5]
+            "format": "url"
         }
     }
 
@@ -266,13 +262,18 @@ def create_minimax_task(lyrics, data):
             MINIMAX_MUSIC_URL,
             json=payload,
             headers=headers,
-            timeout=120  # Увеличенный таймаут для генерации
+            timeout=120
         )
-        response.raise_for_status()
-        result = response.json()
-        print(f"MiniMax response: {json.dumps(result, ensure_ascii=False)}")
+        # Выводим статус и текст ответа В ЛЮБОМ СЛУЧАЕ
+        print(f"MiniMax status code: {response.status_code}")
+        print(f"MiniMax raw response: {response.text}")
 
-        # Проверяем успешность ответа [citation:5]
+        response.raise_for_status()  # выбросит исключение, если статус не 2xx
+
+        result = response.json()
+        print(f"MiniMax parsed response: {json.dumps(result, ensure_ascii=False)}")
+
+        # Проверяем успешность ответа по статус-коду в теле ответа
         if result.get("base_resp", {}).get("status_code") == 0:
             audio_data = result.get("data", {})
             audio_url = audio_data.get("audio")  # При format: "url" здесь будет ссылка
@@ -285,8 +286,11 @@ def create_minimax_task(lyrics, data):
             error_msg = result.get("base_resp", {}).get("status_msg", "Неизвестная ошибка")
             print(f"Ошибка от MiniMax: {error_msg}")
             return None
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP ошибка от MiniMax: {e}")
+        return None
     except Exception as e:
-        print(f"Ошибка при создании задачи в MiniMax: {e}")
+        print(f"Исключение при создании задачи в MiniMax: {e}")
         return None
 
 @app.route('/generate_song', methods=['POST'])
@@ -296,7 +300,7 @@ def generate_song():
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
 
-    # 1. Генерируем текст песни (как и раньше)
+    # 1. Генерируем текст песни
     lyrics = generate_song_lyrics(data)
     if lyrics is None:
         return jsonify({"error": "Не удалось сгенерировать текст песни"}), 500
@@ -306,20 +310,13 @@ def generate_song():
     if not audio_url:
         return jsonify({"error": "Не удалось создать задачу в MiniMax"}), 500
 
-    # MiniMax возвращает результат сразу, поэтому статус не нужен. Отдаём готовую ссылку.
+    # MiniMax возвращает результат сразу, поэтому отдаём готовую ссылку
     return jsonify({
         "ready": True,
         "audio_url": audio_url,
         "title": f"Персональная песня для {data['name']}",
         "message": "Песня успешно сгенерирована!"
     })
-
-# Эндпоинт song_status больше не нужен, так как MiniMax возвращает результат синхронно.
-# Но для совместимости с фронтендом можно оставить простой заглушку.
-@app.route('/song_status/<path:audio_url>', methods=['GET'])
-def song_status_fake(audio_url):
-    """Заглушка для совместимости (если фронтенд ждёт проверки статуса)"""
-    return jsonify({"ready": True, "audio_url": audio_url, "title": "Персональная песня"})
 
 @app.route('/test_minimax', methods=['POST'])
 def test_minimax():
