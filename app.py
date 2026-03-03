@@ -28,6 +28,7 @@ TEMP_AUDIO_DIR = "/tmp/audio"
 os.makedirs(TEMP_AUDIO_DIR, exist_ok=True)
 
 app = Flask(__name__)
+# Настройка CORS – добавьте все ваши домены
 CORS(app, origins=[
     "http://localhost:5001",
     "https://pozdrav888.tilda.ws",
@@ -37,8 +38,12 @@ CORS(app, origins=[
     "https://arbitrfernando-prog-birthday-generator-backend-d412.twc1.net"
 ])
 
-# ========== ФУНКЦИЯ ДЛЯ DEEPSEEK ==========
+# ========== ФУНКЦИЯ ДЛЯ ПРЯМОГО ВЫЗОВА DEEPSEEK ==========
 def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
+    """
+    Отправляет запрос к DeepSeek API и возвращает текст ответа.
+    В случае ошибки возвращает None.
+    """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
@@ -65,8 +70,60 @@ def deepseek_completion(prompt, temperature=0.9, max_tokens=1000):
 
 # ========== ФУНКЦИИ ДЛЯ ТЕКСТОВЫХ ПОЗДРАВЛЕНИЙ ==========
 def build_prompt(data):
-    # (без изменений, оставьте как было)
-    pass
+    """Формирует детальный промпт для генерации трёх вариантов поздравления"""
+    if data['gender'] == 'female':
+        dear = "Дорогая"
+    else:
+        dear = "Дорогой"
+
+    relationship_map = {
+        'husband': 'муж', 'wife': 'жена', 'boyfriend': 'парень',
+        'girlfriend': 'девушка', 'friend': 'друг/подруга',
+        'colleague': 'коллега', 'relative': 'родственник'
+    }
+    relationship = relationship_map.get(data.get('relationship'), 'близкий человек')
+
+    family_parts = []
+    if data.get('spouse'):
+        family_parts.append(f"супруг(а) {data['spouse']}")
+    if data.get('children'):
+        family_parts.append(f"дети {data['children']}")
+    family_text = f"Семья: {', '.join(family_parts)}. " if family_parts else ""
+
+    dreams_text = f"Особая мечта: {data['dreams']}. " if data.get('dreams') else ""
+
+    style_text = {
+        'warm': 'тёплое, душевное, искреннее',
+        'funny': 'с юмором, но доброе',
+        'romantic': 'романтичное, нежное',
+        'short': 'короткое, для смс'
+    }.get(data.get('style'), 'тёплое')
+
+    prompt = f"""
+Ты — мастер искренних поздравлений. Напиши **три разных варианта** поздравления с днём рождения для человека по имени {data['name']}.
+
+Детали:
+- Пол: {data['gender']}
+- Возраст: {data['age']} лет
+- Отношения с поздравляющим: {relationship}
+- Подпись от: {data['fromName']}
+- Увлечения: {data['hobby']}
+- Черты характера: {data['traits']}
+- {dreams_text}
+- {family_text}
+- Желаемый стиль: {style_text}
+
+Требования к каждому варианту:
+- Живой, естественный язык, как будто писал настоящий человек.
+- Разные интонации (например, один более эмоциональный, другой – сдержанный, третий – с лёгким юмором, если уместно).
+- Длина: 2–4 предложения.
+- Заканчивается подписью "{data['fromName']}".
+
+**Верни ТОЛЬКО JSON-массив из трёх строк** в формате:
+["вариант 1", "вариант 2", "вариант 3"]
+Никаких дополнительных пояснений, только массив.
+"""
+    return prompt
 
 @app.route('/')
 def index():
@@ -74,20 +131,115 @@ def index():
 
 @app.route('/test', methods=['POST'])
 def test():
-    # (без изменений)
-    pass
+    """Тестовый эндпоинт (без нейросети)"""
+    data = request.get_json()
+    name = data.get('name', 'друг')
+    gender = data.get('gender', 'female')
+    from_name = data.get('fromName', 'Твой близкий')
+    greeting = f"Дорогая {name}" if gender == 'female' else f"Дорогой {name}"
+    variants = [
+        f"{greeting}! От всей души поздравляю с днём рождения! Желаю счастья, здоровья и исполнения самых заветных желаний. Пусть каждый день дарит радость!",
+        f"С днём рождения, {name}! Ты удивительный человек. Пусть мечты сбываются, а рядом будут только любящие люди. С любовью, {from_name}.",
+        f"{greeting}! Желаю тебе море улыбок, солнечного настроения и ярких впечатлений. Пусть жизнь играет яркими красками!"
+    ]
+    return jsonify({"variants": variants})
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    # (без изменений)
-    pass
+    """Основной эндпоинт для текстовых поздравлений через DeepSeek"""
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({"error": "Не указано имя именинника"}), 400
 
-# ========== ФУНКЦИИ ДЛЯ ПЕСЕН ==========
+        prompt = build_prompt(data)
+        print(f"Sending prompt to DeepSeek: {prompt[:200]}...")
+
+        result_text = deepseek_completion(prompt)
+
+        if result_text is None:
+            return jsonify({"error": "Ошибка при обращении к нейросети"}), 500
+
+        print(f"DeepSeek response: {result_text[:200]}...")
+
+        try:
+            variants = json.loads(result_text)
+            if isinstance(variants, list) and len(variants) == 3 and all(isinstance(v, str) for v in variants):
+                return jsonify({"variants": variants})
+            else:
+                print("Некорректный формат ответа:", result_text)
+                return jsonify({
+                    "variants": [
+                        "Не удалось сгенерировать поздравление в нужном формате.",
+                        "Попробуйте ещё раз позже.",
+                        "Либо обратитесь в поддержку."
+                    ]
+                })
+        except json.JSONDecodeError:
+            print("Ошибка парсинга JSON. Ответ:", result_text)
+            return jsonify({
+                "variants": [
+                    "Не удалось сгенерировать поздравление в нужном формате.",
+                    "Попробуйте ещё раз позже.",
+                    "Либо обратитесь в поддержку."
+                ]
+            })
+
+    except Exception as e:
+        print(f"Ошибка в /generate: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ========== ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ ПЕСЕН (MiniMax Music) ==========
 def generate_song_lyrics(data):
-    # (без изменений)
-    pass
+    """Генерирует текст песни через DeepSeek (с учётом жанра)"""
+    genre = data.get('songGenre', 'pop')
+
+    prompt = f"""Ты — поэт-песенник. Напиши текст песни на русском языке в жанре {genre} в честь дня рождения для человека по имени {data['name']}.
+
+Детали:
+- Пол: {data['gender']}
+- Возраст: {data['age']} лет
+- Увлечения: {data.get('hobby', 'жизнь')}
+- Черты характера: {data.get('traits', 'замечательный человек')}
+- Мечты: {data.get('dreams', 'счастье')}
+
+Требования к структуре:
+[Verse 1] — первый куплет
+[Chorus] — припев (повторяется)
+[Verse 2] — второй куплет
+[Bridge] — мост/переход
+[Outro] — завершение
+
+Текст должен быть тёплым, персонализированным, с упоминанием увлечений и черт характера. 
+Припев должен быть запоминающимся. Используй простой, понятный язык.
+Верни ТОЛЬКО текст песни с указанными тегами, без лишних пояснений.
+"""
+    try:
+        lyrics = deepseek_completion(prompt, max_tokens=800)
+        if lyrics is None:
+            # Запасной вариант
+            return f"""[Verse 1]
+С днём рождения, {data['name']}, сегодня твой день,
+В этот праздник светлый нам грустить совсем не лень.
+Ты {data.get('traits', 'замечательный')}, это знаем мы давно,
+И с тобою рядом всегда нам всем тепло.
+
+[Chorus]
+Пусть сбудутся мечты, что в сердце ты хранишь,
+Как яркий свет в окне, как утренняя тишь.
+Твой {data.get('hobby', 'любимый досуг')} — источник вдохновения,
+Желаем счастья, мира и везения!"""
+        return lyrics
+    except Exception as e:
+        print(f"Ошибка генерации текста песни: {e}")
+        return None
 
 def create_minimax_task(lyrics, data):
+    """
+    Отправляет задачу на генерацию музыки через MiniMax Music API.
+    Скачивает полученный файл и возвращает путь к локальному эндпоинту.
+    Реализованы повторные попытки при таймаутах.
+    """
     headers = {
         "Authorization": f"Bearer {MINIMAX_API_KEY}",
         "Content-Type": "application/json"
@@ -108,7 +260,6 @@ def create_minimax_task(lyrics, data):
 
     print(f"Sending payload to MiniMax: {json.dumps(payload, ensure_ascii=False)}")
 
-    # Настройки повторных попыток
     max_retries = 3
     timeout = 300  # секунд
 
@@ -160,6 +311,7 @@ def create_minimax_task(lyrics, data):
 
 @app.route('/generate_song', methods=['POST'])
 def generate_song():
+    """Запускает генерацию песни: текст (DeepSeek) + генерация в MiniMax + локальное сохранение"""
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({"error": "Не указано имя именинника"}), 400
@@ -181,6 +333,7 @@ def generate_song():
 
 @app.route('/test_minimax', methods=['POST'])
 def test_minimax():
+    """Тестовый эндпоинт для проверки MiniMax (без генерации текста)"""
     data = request.get_json()
     name = data.get('name', 'друг')
     test_lyrics = f"""[Verse]
@@ -197,6 +350,7 @@ def test_minimax():
 
 @app.route('/audio/<filename>')
 def serve_audio(filename):
+    """Отдаёт ранее сохранённый аудиофайл с правильными заголовками"""
     filepath = os.path.join(TEMP_AUDIO_DIR, filename)
     if not os.path.exists(filepath):
         return jsonify({"error": "Файл не найден"}), 404
